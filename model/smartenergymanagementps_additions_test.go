@@ -655,6 +655,163 @@ func TestSmartEnergyManagementPsDataType_UpdateList_CompleteNotificationScenario
 	assert.True(t, *heatPump.Alternatives[0].PowerSequence[0].State.SequenceRemoteControllable)
 }
 
+// ---------------------------------------------------------------------------
+// Phase 2: Additional local-write (remoteWrite=false) tests
+// ---------------------------------------------------------------------------
+
+// TC-2: filterPartial=nil + empty incoming → existing data cleared.
+func TestSmartEnergyManagementPsDataType_UpdateList_FullReplace_EmptyIncoming(t *testing.T) {
+	existing := createOHPCFStructure()
+
+	emptyData := &SmartEnergyManagementPsDataType{}
+	result, success := existing.UpdateList(false, true, emptyData, nil, nil, nil)
+
+	assert.True(t, success)
+	assert.NotNil(t, result)
+
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	assert.Nil(t, resultData.NodeScheduleInformation, "nodeScheduleInformation must be cleared")
+	assert.Empty(t, resultData.Alternatives, "alternatives must be cleared")
+}
+
+// TC-56: remoteWrite=false, write sequence-level scheduleConstraints → applied.
+// Local writes have no field-level restrictions.
+func TestSmartEnergyManagementPsDataType_UpdateList_LocalWrite_SequenceScheduleConstraints(t *testing.T) {
+	existing := createOHPCFStructure()
+
+	newEarliest := util.Ptr(AbsoluteOrRelativeTimeType("PT0S"))
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(1)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(1)),
+				},
+				ScheduleConstraints: &PowerSequenceScheduleConstraintsDataType{
+					EarliestStartTime: newEarliest,
+					LatestEndTime:     util.Ptr(AbsoluteOrRelativeTimeType("PT4H")),
+				},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	assert.NotNil(t, result)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	seq := &resultData.Alternatives[0].PowerSequence[0]
+	assert.NotNil(t, seq.ScheduleConstraints, "scheduleConstraints must be present after local write")
+	if seq.ScheduleConstraints != nil {
+		assert.Equal(t, *newEarliest, *seq.ScheduleConstraints.EarliestStartTime,
+			"earliestStartTime must be applied via local write")
+		assert.Equal(t, AbsoluteOrRelativeTimeType("PT4H"), *seq.ScheduleConstraints.LatestEndTime)
+	}
+	// Other sequence fields must remain unchanged
+	assert.Equal(t, PowerSequenceStateTypeInactive, *seq.State.State)
+}
+
+// TC-57: remoteWrite=false, write schedulePreference → applied.
+func TestSmartEnergyManagementPsDataType_UpdateList_LocalWrite_SchedulePreference(t *testing.T) {
+	existing := createOHPCFStructure()
+
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(1)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(1)),
+				},
+				SchedulePreference: &PowerSequenceSchedulePreferenceDataType{
+					Greenest: util.Ptr(true),
+					Cheapest: util.Ptr(false),
+				},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	seq := &resultData.Alternatives[0].PowerSequence[0]
+	assert.NotNil(t, seq.SchedulePreference, "schedulePreference must be present after local write")
+	if seq.SchedulePreference != nil {
+		assert.Equal(t, true, *seq.SchedulePreference.Greenest)
+		assert.Equal(t, false, *seq.SchedulePreference.Cheapest)
+	}
+	assert.Equal(t, PowerSequenceStateTypeInactive, *seq.State.State, "state must remain unchanged")
+}
+
+// TC-58: remoteWrite=false, write slot-level scheduleConstraints → applied.
+func TestSmartEnergyManagementPsDataType_UpdateList_LocalWrite_SlotScheduleConstraints(t *testing.T) {
+	existing := createOHPCFStructure()
+
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(1)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(1)),
+				},
+				PowerTimeSlot: []SmartEnergyManagementPsPowerTimeSlotType{{
+					Schedule: &PowerTimeSlotScheduleDataType{
+						SlotNumber: util.Ptr(PowerTimeSlotNumberType(1)),
+					},
+					ScheduleConstraints: &PowerTimeSlotScheduleConstraintsDataType{
+						MinDuration:  util.Ptr(DurationType("PT10M")),
+						MaxDuration:  util.Ptr(DurationType("PT30M")),
+						OptionalSlot: util.Ptr(true),
+					},
+				}},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	var slot1 *SmartEnergyManagementPsPowerTimeSlotType
+	for i := range resultData.Alternatives[0].PowerSequence[0].PowerTimeSlot {
+		if *resultData.Alternatives[0].PowerSequence[0].PowerTimeSlot[i].Schedule.SlotNumber == PowerTimeSlotNumberType(1) {
+			slot1 = &resultData.Alternatives[0].PowerSequence[0].PowerTimeSlot[i]
+			break
+		}
+	}
+	assert.NotNil(t, slot1, "slot 1 must be found")
+	if slot1 != nil {
+		assert.NotNil(t, slot1.ScheduleConstraints, "slot-level scheduleConstraints must be set")
+		if slot1.ScheduleConstraints != nil {
+			assert.Equal(t, DurationType("PT10M"), *slot1.ScheduleConstraints.MinDuration)
+			assert.Equal(t, DurationType("PT30M"), *slot1.ScheduleConstraints.MaxDuration)
+			assert.Equal(t, true, *slot1.ScheduleConstraints.OptionalSlot)
+		}
+	}
+	// ValueList must be preserved (not cleared by slot update)
+	assert.NotNil(t, slot1.ValueList, "valueList must be preserved")
+}
+
+// TC-98: filterPartial set but payload has empty alternatives slice → no change to existing data.
+func TestSmartEnergyManagementPsDataType_UpdateList_FilterPartial_EmptyAlternatives_NoChange(t *testing.T) {
+	existing := createOHPCFStructure()
+	origState := *existing.Alternatives[0].PowerSequence[0].State.State
+	origStart := existing.Alternatives[0].PowerSequence[0].Schedule.StartTime
+
+	update := &SmartEnergyManagementPsDataType{}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success, "empty payload update must succeed")
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	assert.Equal(t, origState, *resultData.Alternatives[0].PowerSequence[0].State.State,
+		"state must remain unchanged when payload is empty")
+	assert.Equal(t, origStart, resultData.Alternatives[0].PowerSequence[0].Schedule.StartTime,
+		"schedule must remain unchanged when payload is empty")
+}
+
 // Helper function to create a typical OHPCF structure
 func createOHPCFStructure() *SmartEnergyManagementPsDataType {
 	return &SmartEnergyManagementPsDataType{

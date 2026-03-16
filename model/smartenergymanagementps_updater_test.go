@@ -729,6 +729,665 @@ func TestSmartEnergyManagementPsDataType_RealWorld_DeepCopyBehavior(t *testing.T
 	assert.Equal(t, NumberType(9999), resultValue, "Result should have the modified value")
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3: Additional selector and positional-heuristic tests
+// ---------------------------------------------------------------------------
+
+// TC-62: alternativesId selector with a value not present in existing data → no update.
+func TestSmartEnergyManagementPsDataType_RealWorld_AlternativesId_NotFound(t *testing.T) {
+	existing := createComplexOHPCFStructure() // has alternativesId=0
+	origState := *existing.Alternatives[0].PowerSequence[0].State.State
+
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(99)), // does not exist
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(0)),
+				},
+				State: &PowerSequenceStateDataType{
+					State: util.Ptr(PowerSequenceStateTypeRunning),
+				},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success, "non-existent alternativesId is a no-op success")
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	assert.Equal(t, origState, *resultData.Alternatives[0].PowerSequence[0].State.State,
+		"no alternative matched → state must be unchanged")
+}
+
+// TC-63/64: No alternativesId in filterPartial → update applies to ALL alternatives groups.
+func TestSmartEnergyManagementPsDataType_RealWorld_NoAlternativesIdSelector_UpdateAllGroups(t *testing.T) {
+	// Two alternatives groups
+	existing := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{
+			{
+				Relation: &SmartEnergyManagementPsAlternativesRelationType{
+					AlternativesId: util.Ptr(AlternativesIdType(1)),
+				},
+				PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+					Description: &PowerSequenceDescriptionDataType{
+						SequenceId: util.Ptr(PowerSequenceIdType(1)),
+					},
+					State: &PowerSequenceStateDataType{
+						State: util.Ptr(PowerSequenceStateTypeInactive),
+					},
+				}},
+			},
+			{
+				Relation: &SmartEnergyManagementPsAlternativesRelationType{
+					AlternativesId: util.Ptr(AlternativesIdType(2)),
+				},
+				PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+					Description: &PowerSequenceDescriptionDataType{
+						SequenceId: util.Ptr(PowerSequenceIdType(1)), // same sequenceId in different group
+					},
+					State: &PowerSequenceStateDataType{
+						State: util.Ptr(PowerSequenceStateTypeInactive),
+					},
+				}},
+			},
+		},
+	}
+
+	// No alternativesId in update → targets ALL alternatives groups
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			// No Relation.AlternativesId
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(1)),
+				},
+				State: &PowerSequenceStateDataType{
+					State: util.Ptr(PowerSequenceStateTypeScheduled),
+				},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	// Both groups should be updated
+	assert.Equal(t, PowerSequenceStateTypeScheduled,
+		*resultData.Alternatives[0].PowerSequence[0].State.State,
+		"group 1, sequence 1 must be updated")
+	assert.Equal(t, PowerSequenceStateTypeScheduled,
+		*resultData.Alternatives[1].PowerSequence[0].State.State,
+		"group 2, sequence 1 must also be updated (no alternativesId → update all)")
+}
+
+// TC-66: sequenceId not present in existing data → no sequence created.
+func TestSmartEnergyManagementPsDataType_RealWorld_SequenceId_NotFound_NoCreate(t *testing.T) {
+	existing := createComplexOHPCFStructure() // has sequenceId=0
+	origLen := len(existing.Alternatives[0].PowerSequence)
+
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(99)), // does not exist
+				},
+				State: &PowerSequenceStateDataType{
+					State: util.Ptr(PowerSequenceStateTypeRunning),
+				},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	assert.Equal(t, origLen, len(resultData.Alternatives[0].PowerSequence),
+		"no new sequence must be created for non-existent sequenceId")
+}
+
+// TC-72: slotNumber selector targeting a slot not present in existing data → no slot created.
+func TestSmartEnergyManagementPsDataType_RealWorld_SlotNumber_NotFound_NoCreate(t *testing.T) {
+	existing := createComplexOHPCFStructure() // has slot 1
+	origLen := len(existing.Alternatives[0].PowerSequence[0].PowerTimeSlot)
+
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(0)),
+				},
+				PowerTimeSlot: []SmartEnergyManagementPsPowerTimeSlotType{{
+					Schedule: &PowerTimeSlotScheduleDataType{
+						SlotNumber: util.Ptr(PowerTimeSlotNumberType(99)), // does not exist
+					},
+				}},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	assert.Equal(t, origLen, len(resultData.Alternatives[0].PowerSequence[0].PowerTimeSlot),
+		"no new slot must be created for non-existent slotNumber")
+}
+
+// TC-75: remoteWrite=false, multiple slots in payload without slotNumber selector in filterPartial:
+// all existing slots updated by slotNumber key.
+func TestSmartEnergyManagementPsDataType_RealWorld_NoSlotSelector_AllSlotsUpdatedByKey(t *testing.T) {
+	existing := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(0)),
+				},
+				PowerTimeSlot: []SmartEnergyManagementPsPowerTimeSlotType{
+					{
+						Schedule: &PowerTimeSlotScheduleDataType{
+							SlotNumber:      util.Ptr(PowerTimeSlotNumberType(1)),
+							DefaultDuration: util.Ptr(DurationType("PT10M")),
+						},
+					},
+					{
+						Schedule: &PowerTimeSlotScheduleDataType{
+							SlotNumber:      util.Ptr(PowerTimeSlotNumberType(2)),
+							DefaultDuration: util.Ptr(DurationType("PT20M")),
+						},
+					},
+				},
+			}},
+		}},
+	}
+
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(0)),
+				},
+				PowerTimeSlot: []SmartEnergyManagementPsPowerTimeSlotType{
+					{
+						Schedule: &PowerTimeSlotScheduleDataType{
+							SlotNumber:      util.Ptr(PowerTimeSlotNumberType(1)),
+							DefaultDuration: util.Ptr(DurationType("PT15M")),
+						},
+					},
+					{
+						Schedule: &PowerTimeSlotScheduleDataType{
+							SlotNumber:      util.Ptr(PowerTimeSlotNumberType(2)),
+							DefaultDuration: util.Ptr(DurationType("PT25M")),
+						},
+					},
+				},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	slots := resultData.Alternatives[0].PowerSequence[0].PowerTimeSlot
+	assert.Equal(t, 2, len(slots))
+
+	var slot1, slot2 *SmartEnergyManagementPsPowerTimeSlotType
+	for i := range slots {
+		n := *slots[i].Schedule.SlotNumber
+		if n == 1 {
+			slot1 = &slots[i]
+		} else if n == 2 {
+			slot2 = &slots[i]
+		}
+	}
+	assert.NotNil(t, slot1)
+	if slot1 != nil {
+		assert.Equal(t, DurationType("PT15M"), *slot1.Schedule.DefaultDuration, "slot 1 updated")
+	}
+	assert.NotNil(t, slot2)
+	if slot2 != nil {
+		assert.Equal(t, DurationType("PT25M"), *slot2.Schedule.DefaultDuration, "slot 2 updated")
+	}
+}
+
+// TC-78: valueType not present in existing slot → no new entry created.
+func TestSmartEnergyManagementPsDataType_RealWorld_ValueType_NotFound_NoCreate(t *testing.T) {
+	existing := createComplexOHPCFStructure() // slot 1 has only PowerTimeSlotValueTypeTypePower
+	origLen := len(existing.Alternatives[0].PowerSequence[0].PowerTimeSlot[0].ValueList.Value)
+
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(0)),
+				},
+				PowerTimeSlot: []SmartEnergyManagementPsPowerTimeSlotType{{
+					Schedule: &PowerTimeSlotScheduleDataType{
+						SlotNumber: util.Ptr(PowerTimeSlotNumberType(1)),
+					},
+					ValueList: &SmartEnergyManagementPsPowerTimeSlotValueListType{
+						Value: []PowerTimeSlotValueDataType{{
+							ValueType: util.Ptr(PowerTimeSlotValueTypeTypeEnergy), // does not exist in slot
+							Value:     &ScaledNumberType{Number: util.Ptr(NumberType(999))},
+						}},
+					},
+				}},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	assert.Equal(t, origLen,
+		len(resultData.Alternatives[0].PowerSequence[0].PowerTimeSlot[0].ValueList.Value),
+		"no new value entry must be created for non-existent valueType")
+}
+
+// TC-79: Multiple value types in payload without valueType selector → all merged by valueType key.
+func TestSmartEnergyManagementPsDataType_RealWorld_MultipleValueTypes_MergedByKey(t *testing.T) {
+	existing := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(0)),
+				},
+				PowerTimeSlot: []SmartEnergyManagementPsPowerTimeSlotType{{
+					Schedule: &PowerTimeSlotScheduleDataType{
+						SlotNumber: util.Ptr(PowerTimeSlotNumberType(1)),
+					},
+					ValueList: &SmartEnergyManagementPsPowerTimeSlotValueListType{
+						Value: []PowerTimeSlotValueDataType{
+							{
+								ValueType: util.Ptr(PowerTimeSlotValueTypeTypePower),
+								Value:     &ScaledNumberType{Number: util.Ptr(NumberType(3000)), Scale: util.Ptr(ScaleType(0))},
+							},
+							{
+								ValueType: util.Ptr(PowerTimeSlotValueTypeTypeEnergy),
+								Value:     &ScaledNumberType{Number: util.Ptr(NumberType(1500)), Scale: util.Ptr(ScaleType(3))},
+							},
+						},
+					},
+				}},
+			}},
+		}},
+	}
+
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(0)),
+				},
+				PowerTimeSlot: []SmartEnergyManagementPsPowerTimeSlotType{{
+					Schedule: &PowerTimeSlotScheduleDataType{
+						SlotNumber: util.Ptr(PowerTimeSlotNumberType(1)),
+					},
+					ValueList: &SmartEnergyManagementPsPowerTimeSlotValueListType{
+						Value: []PowerTimeSlotValueDataType{
+							{
+								ValueType: util.Ptr(PowerTimeSlotValueTypeTypePower),
+								Value:     &ScaledNumberType{Number: util.Ptr(NumberType(4000))}, // update power
+							},
+							{
+								ValueType: util.Ptr(PowerTimeSlotValueTypeTypeEnergy),
+								Value:     &ScaledNumberType{Number: util.Ptr(NumberType(2000))}, // update energy
+							},
+						},
+					},
+				}},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	values := resultData.Alternatives[0].PowerSequence[0].PowerTimeSlot[0].ValueList.Value
+	assert.Equal(t, 2, len(values), "both value types must be present")
+
+	var powerVal, energyVal *PowerTimeSlotValueDataType
+	for i := range values {
+		switch *values[i].ValueType {
+		case PowerTimeSlotValueTypeTypePower:
+			powerVal = &values[i]
+		case PowerTimeSlotValueTypeTypeEnergy:
+			energyVal = &values[i]
+		}
+	}
+	assert.NotNil(t, powerVal)
+	if powerVal != nil {
+		assert.Equal(t, NumberType(4000), *powerVal.Value.Number, "power value must be updated")
+	}
+	assert.NotNil(t, energyVal)
+	if energyVal != nil {
+		assert.Equal(t, NumberType(2000), *energyVal.Value.Number, "energy value must be updated")
+	}
+}
+
+// TC-83: valueList partial update with valueType selector: unselected types preserved.
+func TestSmartEnergyManagementPsDataType_RealWorld_ValueList_PartialUpdate_UnselectedPreserved(t *testing.T) {
+	existing := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(0)),
+				},
+				PowerTimeSlot: []SmartEnergyManagementPsPowerTimeSlotType{{
+					Schedule: &PowerTimeSlotScheduleDataType{
+						SlotNumber: util.Ptr(PowerTimeSlotNumberType(1)),
+					},
+					ValueList: &SmartEnergyManagementPsPowerTimeSlotValueListType{
+						Value: []PowerTimeSlotValueDataType{
+							{
+								ValueType: util.Ptr(PowerTimeSlotValueTypeTypePower),
+								Value:     &ScaledNumberType{Number: util.Ptr(NumberType(3000)), Scale: util.Ptr(ScaleType(0))},
+							},
+							{
+								ValueType: util.Ptr(PowerTimeSlotValueTypeTypeEnergy),
+								Value:     &ScaledNumberType{Number: util.Ptr(NumberType(1500)), Scale: util.Ptr(ScaleType(3))},
+							},
+						},
+					},
+				}},
+			}},
+		}},
+	}
+
+	// Update ONLY power value; energy should be preserved
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(0)),
+				},
+				PowerTimeSlot: []SmartEnergyManagementPsPowerTimeSlotType{{
+					Schedule: &PowerTimeSlotScheduleDataType{
+						SlotNumber: util.Ptr(PowerTimeSlotNumberType(1)),
+					},
+					ValueList: &SmartEnergyManagementPsPowerTimeSlotValueListType{
+						Value: []PowerTimeSlotValueDataType{{
+							ValueType: util.Ptr(PowerTimeSlotValueTypeTypePower), // only this
+							Value:     &ScaledNumberType{Number: util.Ptr(NumberType(5000))},
+						}},
+					},
+				}},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	values := resultData.Alternatives[0].PowerSequence[0].PowerTimeSlot[0].ValueList.Value
+	assert.Equal(t, 2, len(values), "both value types must still be present")
+
+	var powerVal, energyVal *PowerTimeSlotValueDataType
+	for i := range values {
+		switch *values[i].ValueType {
+		case PowerTimeSlotValueTypeTypePower:
+			powerVal = &values[i]
+		case PowerTimeSlotValueTypeTypeEnergy:
+			energyVal = &values[i]
+		}
+	}
+	assert.NotNil(t, powerVal)
+	if powerVal != nil {
+		assert.Equal(t, NumberType(5000), *powerVal.Value.Number, "power value must be updated")
+	}
+	assert.NotNil(t, energyVal)
+	if energyVal != nil {
+		assert.Equal(t, NumberType(1500), *energyVal.Value.Number,
+			"energy value must be preserved (was not in update payload)")
+		assert.Equal(t, ScaleType(3), *energyVal.Value.Scale, "energy scale must be preserved")
+	}
+}
+
+// TC-86: Mixed positional/semantic heuristic — some sequences have sequenceIds, some don't.
+// Sequences with IDs → semantic (key-based); sequences without IDs trigger positional check.
+func TestSmartEnergyManagementPsDataType_RealWorld_Positional_MixedHeuristic(t *testing.T) {
+	existing := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{
+				{
+					Description: &PowerSequenceDescriptionDataType{
+						SequenceId: util.Ptr(PowerSequenceIdType(1)),
+					},
+					State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeInactive)},
+				},
+				{
+					Description: &PowerSequenceDescriptionDataType{
+						SequenceId: util.Ptr(PowerSequenceIdType(2)),
+					},
+					State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeInactive)},
+				},
+			},
+		}},
+	}
+
+	// Mixed payload: first sequence empty (positional placeholder), second has key+data
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{
+				{}, // empty positional placeholder
+				{
+					Description: &PowerSequenceDescriptionDataType{
+						SequenceId: util.Ptr(PowerSequenceIdType(2)), // key for second
+					},
+					State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeScheduled)},
+				},
+			},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	// Sequence with sequenceId=2 should be updated; sequence with sequenceId=1 should not
+	var seq1, seq2 *SmartEnergyManagementPsPowerSequenceType
+	for i := range resultData.Alternatives[0].PowerSequence {
+		switch *resultData.Alternatives[0].PowerSequence[i].Description.SequenceId {
+		case 1:
+			seq1 = &resultData.Alternatives[0].PowerSequence[i]
+		case 2:
+			seq2 = &resultData.Alternatives[0].PowerSequence[i]
+		}
+	}
+	assert.NotNil(t, seq2)
+	if seq2 != nil {
+		assert.Equal(t, PowerSequenceStateTypeScheduled, *seq2.State.State, "seq 2 must be updated")
+	}
+	assert.NotNil(t, seq1)
+	if seq1 != nil {
+		assert.Equal(t, PowerSequenceStateTypeInactive, *seq1.State.State, "seq 1 must remain unchanged")
+	}
+}
+
+// TC-88: Positional update: fewer sequences in payload than in existing → only first N updated.
+func TestSmartEnergyManagementPsDataType_RealWorld_Positional_FewerSequences(t *testing.T) {
+	existing := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{
+				{
+					State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeInactive)},
+				},
+				{
+					State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeInactive)},
+				},
+				{
+					State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeInactive)},
+				},
+			},
+		}},
+	}
+
+	// Only one sequence in update, with content → positional: updates position 0
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeScheduled)},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	assert.Equal(t, 3, len(resultData.Alternatives[0].PowerSequence),
+		"sequence count must remain 3")
+	assert.Equal(t, PowerSequenceStateTypeScheduled,
+		*resultData.Alternatives[0].PowerSequence[0].State.State,
+		"first sequence (position 0) must be updated")
+	assert.Equal(t, PowerSequenceStateTypeInactive,
+		*resultData.Alternatives[0].PowerSequence[1].State.State,
+		"second sequence must remain inactive")
+	assert.Equal(t, PowerSequenceStateTypeInactive,
+		*resultData.Alternatives[0].PowerSequence[2].State.State,
+		"third sequence must remain inactive")
+}
+
+// TC-89: Positional update: more sequences in payload than in existing → extras ignored.
+func TestSmartEnergyManagementPsDataType_RealWorld_Positional_MoreSequences(t *testing.T) {
+	existing := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeInactive)},
+			}},
+		}},
+	}
+
+	// Three sequences in payload, only one in existing → extra ones beyond length ignored
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(0)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{
+				{State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeScheduled)}},
+				{State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeRunning)}},
+				{State: &PowerSequenceStateDataType{State: util.Ptr(PowerSequenceStateTypeCompleted)}},
+			},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+	// Existing sequence count must not change (extras ignored)
+	assert.Equal(t, 1, len(resultData.Alternatives[0].PowerSequence),
+		"sequence count must remain 1; extra payload sequences must be ignored")
+	assert.Equal(t, PowerSequenceStateTypeScheduled,
+		*resultData.Alternatives[0].PowerSequence[0].State.State,
+		"first/only sequence updated from payload position 0")
+}
+
+// TC-91: Two alternatives groups; write schedule.startTime for sequence in group 2 →
+// group 1 sequences unchanged.
+func TestSmartEnergyManagementPsDataType_RealWorld_MultipleGroups_ScheduleUpdate_GroupTwo(t *testing.T) {
+	existing := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{
+			{
+				Relation: &SmartEnergyManagementPsAlternativesRelationType{
+					AlternativesId: util.Ptr(AlternativesIdType(1)),
+				},
+				PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+					Description: &PowerSequenceDescriptionDataType{
+						SequenceId: util.Ptr(PowerSequenceIdType(1)),
+					},
+					Schedule: &PowerSequenceScheduleDataType{
+						StartTime: util.Ptr(AbsoluteOrRelativeTimeType("PT1H")),
+					},
+				}},
+			},
+			{
+				Relation: &SmartEnergyManagementPsAlternativesRelationType{
+					AlternativesId: util.Ptr(AlternativesIdType(2)),
+				},
+				PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+					Description: &PowerSequenceDescriptionDataType{
+						SequenceId: util.Ptr(PowerSequenceIdType(2)),
+					},
+					Schedule: &PowerSequenceScheduleDataType{
+						StartTime: util.Ptr(AbsoluteOrRelativeTimeType("PT2H")),
+					},
+				}},
+			},
+		},
+	}
+
+	// Update only group 2
+	update := &SmartEnergyManagementPsDataType{
+		Alternatives: []SmartEnergyManagementPsAlternativesType{{
+			Relation: &SmartEnergyManagementPsAlternativesRelationType{
+				AlternativesId: util.Ptr(AlternativesIdType(2)),
+			},
+			PowerSequence: []SmartEnergyManagementPsPowerSequenceType{{
+				Description: &PowerSequenceDescriptionDataType{
+					SequenceId: util.Ptr(PowerSequenceIdType(2)),
+				},
+				Schedule: &PowerSequenceScheduleDataType{
+					StartTime: util.Ptr(AbsoluteOrRelativeTimeType("PT3H")),
+				},
+			}},
+		}},
+	}
+	result, success := existing.UpdateList(false, true, update, NewFilterTypePartial(), nil, nil)
+
+	assert.True(t, success)
+	resultData := result.(*SmartEnergyManagementPsDataType)
+
+	// Group 1 must be unchanged
+	assert.Equal(t, AbsoluteOrRelativeTimeType("PT1H"),
+		*resultData.Alternatives[0].PowerSequence[0].Schedule.StartTime,
+		"group 1 startTime must be unchanged")
+	// Group 2 must be updated
+	assert.Equal(t, AbsoluteOrRelativeTimeType("PT3H"),
+		*resultData.Alternatives[1].PowerSequence[0].Schedule.StartTime,
+		"group 2 startTime must be updated")
+}
+
 // Helper function to create a complex OHPCF structure for testing
 func createComplexOHPCFStructure() *SmartEnergyManagementPsDataType {
 	return &SmartEnergyManagementPsDataType{
